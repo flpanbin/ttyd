@@ -354,7 +354,7 @@ int main(int argc, char **argv) {
         print_help();
         return 0;
       case 'v':
-        printf("ttyd version 666 %s\n", TTYD_VERSION);
+        printf("ttyd version %s\n", TTYD_VERSION);
         return 0;
       case 'd':
         debug_level = parse_int("debug", optarg);
