@@ -5,13 +5,63 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <sys/stat.h>
 
 #include "pty.h"
 #include "server.h"
 #include "utils.h"
+#include "audit.h"
 
 // initial message list
 static char initial_cmds[] = {SET_WINDOW_TITLE, SET_PREFERENCES};
+
+// 日志文件路径
+#define AUDIT_LOG_FILE "/var/log/ttyd/audit.log"
+
+// 确保日志目录存在
+static void ensure_log_dir() {
+    char *log_dir = strdup(AUDIT_LOG_FILE);
+    char *last_slash = strrchr(log_dir, '/');
+    if (last_slash) {
+        *last_slash = '\0';
+        mkdir(log_dir, 0755);
+    }
+    free(log_dir);
+}
+
+// 写入审计日志
+static void write_audit_log(const char *user, const char *address, const char *command, int status) {
+    static FILE *log_file = NULL;
+    static bool initialized = false;
+    
+    if (!initialized) {
+        ensure_log_dir();
+        log_file = fopen(AUDIT_LOG_FILE, "a");
+        if (log_file == NULL) {
+            lwsl_err("Failed to open audit log file: %s\n", strerror(errno));
+            return;
+        }
+        initialized = true;
+    }
+    
+    time_t now;
+    struct tm *tm_info;
+    char timestamp[26];
+    
+    time(&now);
+    tm_info = localtime(&now);
+    strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", tm_info);
+    
+    // 写入日志文件
+    fprintf(log_file, "[%s] User: %s, Address: %s, Command: %s, Status: %d\n",
+            timestamp, user, address, command, status);
+    fflush(log_file);
+    
+    // 同时输出到标准输出
+    printf("[%s] User: %s, Address: %s, Command: %s, Status: %d\n",
+           timestamp, user, address, command, status);
+}
 
 static int send_initial_message(struct lws *wsi, int index) {
   unsigned char message[LWS_PRE + 1 + 4096];
@@ -83,6 +133,15 @@ static void process_read_cb(pty_process *process, pty_buf_t *buf, bool eof) {
   if (ctx->ws_closed) {
     pty_buf_free(buf);
     return;
+  }
+
+  // 记录命令输出
+  if (server->audit_output && buf != NULL) {
+    char *output = xmalloc(buf->len + 1);
+    memcpy(output, buf->base, buf->len);
+    output[buf->len] = '\0';
+    audit_log_output(ctx->pss->user, ctx->pss->address, output);
+    free(output);
   }
 
   if (eof && !process_running(process))
@@ -197,7 +256,9 @@ static bool check_auth(struct lws *wsi, struct pss_tty *pss) {
 int callback_tty(struct lws *wsi, enum lws_callback_reasons reason, void *user, void *in, size_t len) {
   struct pss_tty *pss = (struct pss_tty *)user;
   char buf[256];
-  size_t n = 0;
+  static char current_cmd[1024] = {0};  // 用于存储当前命令
+  static size_t cmd_len = 0;            // 当前命令长度
+  int n = 0;                            // 用于存储 lws_hdr_copy 的返回值
 
   switch (reason) {
     case LWS_CALLBACK_FILTER_PROTOCOL_CONNECTION:
@@ -233,6 +294,27 @@ int callback_tty(struct lws *wsi, enum lws_callback_reasons reason, void *user, 
       pss->authenticated = false;
       pss->wsi = wsi;
       pss->lws_close_status = LWS_CLOSE_STATUS_NOSTATUS;
+      memset(pss->user, 0, sizeof(pss->user));  // 初始化 user 字段
+
+      // 设置用户信息
+      if (server->username != NULL) {
+        // 如果设置了 username 参数，使用它作为审计日志的用户名
+        strncpy(pss->user, server->username, sizeof(pss->user) - 1);
+        pss->user[sizeof(pss->user) - 1] = '\0';  // 确保字符串结束
+        lwsl_notice("Using username from command line: %s\n", pss->user);
+      } else if (server->auth_header != NULL) {
+        // 否则尝试从 HTTP 头部获取
+        if (lws_hdr_custom_copy(wsi, pss->user, sizeof(pss->user), server->auth_header, strlen(server->auth_header)) <= 0) {
+          lwsl_warn("Failed to get user from auth header\n");
+          strcpy(pss->user, "unknown");
+        }
+      } else {
+        strcpy(pss->user, "anonymous");
+      }
+
+      // 确保用户名字符串正确结束
+      pss->user[sizeof(pss->user) - 1] = '\0';
+      lwsl_notice("Final username set to: %s\n", pss->user);
 
       if (server->url_arg) {
         while (lws_hdr_copy_fragment(wsi, buf, sizeof(buf), WSI_TOKEN_HTTP_URI_ARGS, n++) > 0) {
@@ -247,7 +329,7 @@ int callback_tty(struct lws *wsi, enum lws_callback_reasons reason, void *user, 
       server->client_count++;
 
       lws_get_peer_simple(lws_get_network_wsi(wsi), pss->address, sizeof(pss->address));
-      lwsl_notice("WS   %s - %s, clients: %d\n", pss->path, pss->address, server->client_count);
+      lwsl_notice("WS   %s - %s, clients: %d, user: %s\n", pss->path, pss->address, server->client_count, pss->user);
       break;
 
     case LWS_CALLBACK_SERVER_WRITEABLE:
@@ -307,11 +389,38 @@ int callback_tty(struct lws *wsi, enum lws_callback_reasons reason, void *user, 
       switch (command) {
         case INPUT:
           if (!server->writable) break;
+          
+          // 获取输入内容
+          char *input = xmalloc(pss->len);
+          memcpy(input, pss->buffer + 1, pss->len - 1);
+          input[pss->len - 1] = '\0';
+          
+          // 处理命令输入
+          if (input[0] == '\r' || input[0] == '\n') {
+            // 命令结束，打印完整命令
+            if (cmd_len > 0) {
+              current_cmd[cmd_len] = '\0';
+              // 记录命令，初始状态为0
+              lwsl_notice("Logging command for user: %s\n", pss->user);  // 添加调试日志
+              audit_log_command(pss->user, pss->address, current_cmd, 0);
+              cmd_len = 0;  // 重置命令长度
+            }
+          } else {
+            // 将输入添加到当前命令
+            if (cmd_len + pss->len - 1 < sizeof(current_cmd)) {
+              memcpy(current_cmd + cmd_len, input, pss->len - 1);
+              cmd_len += pss->len - 1;
+            }
+          }
+          
+          // 继续处理命令
           int err = pty_write(pss->process, pty_buf_init(pss->buffer + 1, pss->len - 1));
           if (err) {
             lwsl_err("uv_write: %s (%s)\n", uv_err_name(err), uv_strerror(err));
+            free(input);
             return -1;
           }
+          free(input);
           break;
         case RESIZE_TERMINAL:
           if (pss->process == NULL) break;
@@ -371,6 +480,12 @@ int callback_tty(struct lws *wsi, enum lws_callback_reasons reason, void *user, 
       }
 
       if (pss->process != NULL) {
+        // 记录命令执行状态
+        if (cmd_len > 0) {
+          current_cmd[cmd_len] = '\0';
+          audit_log_command(pss->user, pss->address, current_cmd, pss->process->exit_code);
+        }
+        
         ((pty_ctx_t *)pss->process->ctx)->ws_closed = true;
         if (process_running(pss->process)) {
           pty_pause(pss->process);
@@ -379,8 +494,8 @@ int callback_tty(struct lws *wsi, enum lws_callback_reasons reason, void *user, 
         }
       }
 
-      if ((server->once || server->exit_no_conn) && server->client_count == 0) {
-        lwsl_notice("exiting due to the --once/--exit-no-conn option.\n");
+      if (server->once && server->client_count == 0) {
+        lwsl_notice("exiting due to the --once option.\n");
         force_exit = true;
         lws_cancel_service(context);
         exit(0);

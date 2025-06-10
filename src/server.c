@@ -12,6 +12,7 @@
 #include <sys/stat.h>
 
 #include "utils.h"
+#include "audit.h"
 
 #ifndef TTYD_VERSION
 #define TTYD_VERSION "unknown"
@@ -56,6 +57,7 @@ static const struct option options[] = {{"port", required_argument, NULL, 'p'},
                                         {"socket-owner", required_argument, NULL, 'U'},
                                         {"credential", required_argument, NULL, 'c'},
                                         {"auth-header", required_argument, NULL, 'H'},
+                                        {"username", required_argument, NULL, 'n'},
                                         {"uid", required_argument, NULL, 'u'},
                                         {"gid", required_argument, NULL, 'g'},
                                         {"signal", required_argument, NULL, 's'},
@@ -77,14 +79,12 @@ static const struct option options[] = {{"port", required_argument, NULL, 'p'},
                                         {"check-origin", no_argument, NULL, 'O'},
                                         {"max-clients", required_argument, NULL, 'm'},
                                         {"once", no_argument, NULL, 'o'},
-                                        {"exit-no-conn", no_argument, NULL, 'q'},
                                         {"browser", no_argument, NULL, 'B'},
                                         {"debug", required_argument, NULL, 'd'},
                                         {"version", no_argument, NULL, 'v'},
                                         {"help", no_argument, NULL, 'h'},
-                                        {"serv_buffer_size", required_argument, NULL, 'f'},
                                         {NULL, 0, 0, 0}};
-static const char *opt_string = "p:i:U:c:H:u:g:s:w:I:b:f:P:6aSC:K:A:Wt:T:Om:oqBd:vh";
+static const char *opt_string = "p:i:U:c:H:n:u:g:s:w:I:b:P:6aSC:K:A:Wt:T:Om:oBd:vh";
 
 static void print_help() {
   // clang-format off
@@ -99,6 +99,7 @@ static void print_help() {
           "    -U, --socket-owner      User owner of the UNIX domain socket file, when enabled (eg: user:group)\n"
           "    -c, --credential        Credential for basic authentication (format: username:password)\n"
           "    -H, --auth-header       HTTP Header name for auth proxy, this will configure ttyd to let a HTTP reverse proxy handle authentication\n"
+          "    -n, --username          Username for audit logging, will be used in audit logs instead of auth header value\n"
           "    -u, --uid               User id to run with\n"
           "    -g, --gid               Group id to run with\n"
           "    -s, --signal            Signal to send to the command when exit it (default: 1, SIGHUP)\n"
@@ -110,11 +111,9 @@ static void print_help() {
           "    -O, --check-origin      Do not allow websocket connection from different origin\n"
           "    -m, --max-clients       Maximum clients to support (default: 0, no limit)\n"
           "    -o, --once              Accept only one client and exit on disconnection\n"
-          "    -q, --exit-no-conn      Exit on all clients disconnection\n"
           "    -B, --browser           Open terminal with the default system browser\n"
           "    -I, --index             Custom index.html path\n"
           "    -b, --base-path         Expected base path for requests coming from a reverse proxy (eg: /mounted/here, max length: 128)\n"
-          "    -f, --serv_buffer_size  Maximum chunk of file that can be sent at once (eg: --service_buffer_size 4096 indicates 4KB)\n"
 #if LWS_LIBRARY_VERSION_NUMBER >= 4000000
           "    -P, --ping-interval     Websocket ping interval(sec) (default: 5)\n"
 #endif
@@ -154,10 +153,8 @@ static void print_config() {
   if (server->url_arg) lwsl_notice("  allow url arg: true\n");
   if (server->max_clients > 0) lwsl_notice("  max clients: %d\n", server->max_clients);
   if (server->once) lwsl_notice("  once: true\n");
-  if (server->exit_no_conn) lwsl_notice("  exit_no_conn: true\n");
   if (server->index != NULL) lwsl_notice("  custom index.html: %s\n", server->index);
   if (server->cwd != NULL) lwsl_notice("  working directory: %s\n", server->cwd);
-  if (server->serv_buffer_size != 0) lwsl_notice("  Service buffer size: %d bytes\n", server->serv_buffer_size);
   if (!server->writable) lwsl_notice("The --writable option is not set, will start in readonly mode");
 }
 
@@ -314,7 +311,17 @@ int main(int argc, char **argv) {
 #endif
 
   int start = calc_command_start(argc, argv);
+  if (start < 0) return 1;
+
   server = server_new(argc, argv, start);
+  if (server == NULL) return 1;
+
+  // 初始化审计系统
+  const char *log_file = "/var/log/ttyd/audit.log";
+  if (audit_init(log_file, true, true) != 0) {
+    lwsl_err("Failed to initialize audit system\n");
+    return 1;
+  }
 
   struct lws_context_creation_info info;
   memset(&info, 0, sizeof(info));
@@ -323,6 +330,7 @@ int main(int argc, char **argv) {
   info.protocols = protocols;
   info.gid = -1;
   info.uid = -1;
+  info.pt_serv_buf_size = 262144;
   info.max_http_header_pool = 16;
   info.options = LWS_SERVER_OPTION_LIBUV | LWS_SERVER_OPTION_VALIDATE_UTF8 | LWS_SERVER_OPTION_DISABLE_IPV6;
 #ifndef LWS_WITHOUT_EXTENSIONS
@@ -330,8 +338,7 @@ int main(int argc, char **argv) {
 #endif
   info.max_http_header_data = 65535;
 
-
-  int debug_level = LLL_ERR | LLL_WARN | LLL_NOTICE;
+  int debug_level = LLL_ERR | LLL_WARN | LLL_NOTICE | LLL_INFO;
   char iface[128] = "";
   char socket_owner[128] = "";
   bool browser = false;
@@ -354,7 +361,7 @@ int main(int argc, char **argv) {
         print_help();
         return 0;
       case 'v':
-        printf("ttyd version %s\n", TTYD_VERSION);
+        printf("ttyd version 1004 %s\n", TTYD_VERSION);
         return 0;
       case 'd':
         debug_level = parse_int("debug", optarg);
@@ -374,9 +381,6 @@ int main(int argc, char **argv) {
       case 'o':
         server->once = true;
         break;
-      case 'q':
-        server->exit_no_conn = true;
-        break;
       case 'B':
         browser = true;
         break;
@@ -387,14 +391,6 @@ int main(int argc, char **argv) {
           return -1;
         }
         break;
-      case 'f':
-       info.pt_serv_buf_size = parse_int("serv_buffer_size", optarg);
-       if (info.pt_serv_buf_size < 0) {
-         fprintf(stderr, "ttyd: invalid service buffer size: %s\n", optarg);
-         return -1;
-       }
-       server->serv_buffer_size = info.pt_serv_buf_size;
-       break;
       case 'i':
         strncpy(iface, optarg, sizeof(iface) - 1);
         iface[sizeof(iface) - 1] = '\0';
@@ -414,6 +410,10 @@ int main(int argc, char **argv) {
         break;
       case 'H':
         server->auth_header = strdup(optarg);
+        break;
+      case 'n':
+        server->username = strdup(optarg);
+        lwsl_notice("Username set to: %s\n", server->username);
         break;
       case 'u':
         info.uid = parse_int("uid", optarg);

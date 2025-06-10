@@ -3,6 +3,7 @@
 #include <uv.h>
 
 #include "pty.h"
+#include "audit.h"
 
 // client message
 #define INPUT '0'
@@ -59,14 +60,14 @@ struct pss_tty {
 typedef struct {
   struct pss_tty *pss;
   bool ws_closed;
-} pty_ctx_t;
+} pty_ctx_t ;
 
 struct server {
   int client_count;        // client count
-  int serv_buffer_size;    // service buffer size
   char *prefs_json;        // client preferences
   char *credential;        // encoded basic auth credential
   char *auth_header;       // header name used for auth proxy
+  char *username;          // username for audit logging
   char *index;             // custom index.html
   char *command;           // full command line
   char **argv;             // command with arguments
@@ -79,9 +80,11 @@ struct server {
   bool check_origin;       // whether allow websocket connection from different origin
   int max_clients;         // maximum clients to support
   bool once;               // whether accept only one client and exit on disconnection
-  bool exit_no_conn;       // whether exit on all clients disconnection
   char socket_path[255];   // UNIX domain socket path
   char terminal_type[30];  // terminal type to report
+  char *audit_log;         // audit log file path
+  bool audit_commands;     // whether to log commands
+  bool audit_output;       // whether to log output
 
   uv_loop_t *loop;         // the libuv event loop
 };
