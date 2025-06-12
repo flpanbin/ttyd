@@ -80,7 +80,9 @@ static pty_ctx_t *pty_ctx_init(struct pss_tty *pss) {
   return ctx;
 }
 
-static void pty_ctx_free(pty_ctx_t *ctx) { free(ctx); }
+static void pty_ctx_free(pty_ctx_t *ctx) {
+  free(ctx);
+}
 
 static void process_read_cb(pty_process *process, pty_buf_t *buf, bool eof) {
   pty_ctx_t *ctx = (pty_ctx_t *)process->ctx;
@@ -209,9 +211,10 @@ static char **build_env(struct pss_tty *pss) {
 
     // TTYD_USER
     if (strlen(pss->user) > 0) {
-        envp[i] = xmalloc(40);
-        snprintf(envp[i], 40, "TTYD_USER=%s", pss->user);
-        i++;
+      envp = xrealloc(envp, (++n) * sizeof(char *));
+      envp[i] = xmalloc(40);
+      snprintf(envp[i], 40, "TTYD_USER=%s", pss->user);
+      i++;
     }
 
     // 添加审计命令
