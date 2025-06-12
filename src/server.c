@@ -83,6 +83,9 @@ static const struct option options[] = {{"port", required_argument, NULL, 'p'},
                                         {"debug", required_argument, NULL, 'd'},
                                         {"version", no_argument, NULL, 'v'},
                                         {"help", no_argument, NULL, 'h'},
+                                        {"audit-enable", no_argument, NULL, 0},
+                                        {"audit-log-file", required_argument, NULL, 0},
+                                        {"audit-field", required_argument, NULL, 0},
                                         {NULL, 0, 0, 0}};
 static const char *opt_string = "p:i:U:c:H:n:u:g:s:w:I:b:P:6aSC:K:A:Wt:T:Om:oBd:vh";
 
@@ -128,6 +131,9 @@ static void print_help() {
 #endif
           "    -d, --debug             Set log level (default: 7)\n"
           "    -v, --version           Print the version and exit\n"
+          "  --audit-enable          Enable command audit logging\n"
+          "  --audit-log-file        Audit log file path (default: /var/log/ttyd/audit.log)\n"
+          "  --audit-field           Add custom field to audit log (format: key=value), can be used multiple times\n"
           "    -h, --help              Print this text and exit\n\n"
           "Visit https://github.com/tsl0922/ttyd to get more information and report bugs.\n",
           TTYD_VERSION
@@ -298,6 +304,61 @@ static int calc_command_start(int argc, char **argv) {
   return start;
 }
 
+// 验证和初始化审计字段
+static int init_audit_fields(void) {
+    if (!server->audit_enabled) {
+        return 0;
+    }
+    lwsl_notice("Initializing audit system\n");
+    // 设置默认日志文件路径
+    if (!server->audit_log_file) {
+        server->audit_log_file = strdup("/var/log/ttyd/audit.log");
+        lwsl_notice("Using default audit log file: %s\n", server->audit_log_file);
+    }
+
+    // 验证自定义字段格式
+    for (int i = 0; i < server->audit_fields_count; i++) {
+        char *field = server->audit_fields[i];
+        lwsl_notice("Processing audit field[%d]: %s\n", i, field);
+        
+        // 创建字段的副本以避免修改原始字符串
+        char *field_copy = strdup(field);
+        if (!field_copy) {
+            lwsl_err("Failed to duplicate audit field: %s\n", field);
+            return -1;
+        }
+        
+        char *value = strchr(field_copy, '=');
+        if (!value) {
+            lwsl_err("Invalid audit field format: %s (should be key=value)\n", field);
+            free(field_copy);
+            return -1;
+        }
+        
+        // 分割键值对
+        *value = '\0';  // 在等号处终止键
+        value++;        // 移动到值部分
+        
+        lwsl_notice("Adding audit field: key='%s', value='%s'\n", field_copy, value);
+        if (audit_add_custom_field(field_copy, value) != 0) {
+            lwsl_err("Failed to add audit field: %s=%s\n", field_copy, value);
+            free(field_copy);
+            return -1;
+        }
+        
+        free(field_copy);
+        lwsl_notice("Audit field[%d] added successfully\n", i);
+    }
+
+    // 初始化审计系统，只记录命令
+    if (audit_init(server->audit_log_file) != 0) {
+        lwsl_err("Failed to initialize audit system\n");
+        return -1;
+    }
+
+    return 0;
+}
+
 int main(int argc, char **argv) {
   if (argc == 1) {
     print_help();
@@ -316,13 +377,6 @@ int main(int argc, char **argv) {
   server = server_new(argc, argv, start);
   if (server == NULL) return 1;
 
-  // 初始化审计系统
-  const char *log_file = "/var/log/ttyd/audit.log";
-  if (audit_init(log_file, true, true) != 0) {
-    lwsl_err("Failed to initialize audit system\n");
-    return 1;
-  }
-
   struct lws_context_creation_info info;
   memset(&info, 0, sizeof(info));
   info.port = 7681;
@@ -338,7 +392,7 @@ int main(int argc, char **argv) {
 #endif
   info.max_http_header_data = 65535;
 
-  int debug_level = LLL_ERR | LLL_WARN | LLL_NOTICE | LLL_INFO;
+  int debug_level = LLL_ERR | LLL_WARN | LLL_NOTICE;
   char iface[128] = "";
   char socket_owner[128] = "";
   bool browser = false;
@@ -355,7 +409,9 @@ int main(int argc, char **argv) {
 
   // parse command line options
   int c;
-  while ((c = getopt_long(start, argv, opt_string, options, NULL)) != -1) {
+  int option_index = 0;  // 添加 option_index 变量
+  while ((c = getopt_long(start, argv, opt_string, options, &option_index)) != -1) {
+    lwsl_notice("Processing option: c=%d, option_index=%d\n", c, option_index);
     switch (c) {
       case 'h':
         print_help();
@@ -519,11 +575,46 @@ int main(int argc, char **argv) {
           json_object_object_add(client_prefs, key, obj != NULL ? obj : json_object_new_string(value));
         }
         break;
+      case 0:
+        lwsl_notice("Case 0: option name=%s, optarg=%s\n", 
+                   options[option_index].name, 
+                   optarg ? optarg : "NULL");
+        if (strcmp(options[option_index].name, "audit-enable") == 0) {
+          lwsl_notice("Found audit-enable option\n");
+          server->audit_enabled = true;
+        } else if (strcmp(options[option_index].name, "audit-log-file") == 0) {
+          lwsl_notice("Found audit-log-file option\n");
+          server->audit_log_file = strdup(optarg);
+          lwsl_notice("Audit log file set to: %s\n", server->audit_log_file);
+        } else if (strcmp(options[option_index].name, "audit-field") == 0) {
+          lwsl_notice("Found audit-field option\n");
+          lwsl_notice("Raw optarg: %s, length: %zu\n", optarg, strlen(optarg));
+          for (size_t i = 0; i < strlen(optarg); i++) {
+            lwsl_notice("optarg[%zu] = '%c' (0x%02x)\n", i, optarg[i], (unsigned char)optarg[i]);
+          }
+          if (validate_audit_field(optarg) != 0) {
+            lwsl_err("Invalid audit field format: %s\n", optarg);
+            cleanup();
+            return -1;
+          }
+          server->audit_fields = xrealloc(server->audit_fields, (server->audit_fields_count + 1) * sizeof(char *));
+          server->audit_fields[server->audit_fields_count++] = strdup(optarg);
+          lwsl_notice("Added audit field: %s\n", optarg);
+        }
+        break;
       default:
         print_help();
         return -1;
     }
   }
+
+  // 初始化审计字段
+  if (init_audit_fields() != 0) {
+    lwsl_err("Failed to initialize audit fields\n");
+    cleanup();
+    return -1;
+  }
+
   server->prefs_json = strdup(json_object_to_json_string(client_prefs));
   json_object_put(client_prefs);
 
@@ -632,5 +723,26 @@ int main(int argc, char **argv) {
   // cleanup
   server_free(server);
 
+  // 清理审计字段
+  cleanup();
   return 0;
+}
+
+void cleanup(void) {
+  // ... existing code ...
+  
+  // 清理审计系统
+  if (server->audit_enabled) {
+    audit_cleanup();
+  }
+  
+  // 清理审计字段
+  if (server->audit_fields) {
+    for (char **field = server->audit_fields; *field; field++) {
+      free(*field);
+    }
+    free(server->audit_fields);
+  }
+  
+  // ... existing code ...
 }

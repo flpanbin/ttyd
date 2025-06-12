@@ -4,34 +4,45 @@
 #include <time.h>
 #include <stdbool.h>
 
-// 审计日志结构体
+// 自定义字段结构
 typedef struct {
-    char *log_file;        // 日志文件路径
-    bool enabled;          // 是否启用审计
-    bool log_commands;     // 是否记录命令
-    bool log_output;       // 是否记录输出
+    char *key;
+    char *value;
+} audit_custom_field_t;
+
+// 审计配置结构
+typedef struct {
+    bool enabled;
+    char *log_file;
+    audit_custom_field_t *custom_fields;  // 自定义字段数组
+    int custom_fields_count;              // 自定义字段数量
 } audit_config_t;
 
-// 审计日志条目结构体
+// 审计日志条目结构
 typedef struct {
-    time_t timestamp;      // 时间戳
-    char *user;           // 用户名
-    char *address;        // 客户端地址
-    char *command;        // 执行的命令
-    char *output;         // 命令输出
-    int status;           // 命令执行状态
+    time_t timestamp;
+    char *address;
+    char *command;
+    char *output;
+    int status;
+    audit_custom_field_t *custom_fields;  // 自定义字段数组
+    int custom_fields_count;              // 自定义字段数量
 } audit_entry_t;
 
 // 初始化审计系统
-int audit_init(const char *log_file, bool log_commands, bool log_output);
+int audit_init(const char *log_file);
 
 // 记录命令
-void audit_log_command(const char *user, const char *address, const char *command, int status);
-
-// 记录输出
-void audit_log_output(const char *user, const char *address, const char *output);
+void audit_log_command(const char *address, const char *command, int status);
 
 // 关闭审计系统
 void audit_cleanup(void);
+
+// 新增函数声明
+int audit_add_custom_field(const char *key, const char *value);
+void audit_clear_custom_fields(void);
+
+// 验证审计字段格式
+int validate_audit_field(const char *field);
 
 #endif // TTYD_AUDIT_H 

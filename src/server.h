@@ -60,7 +60,8 @@ struct pss_tty {
 typedef struct {
   struct pss_tty *pss;
   bool ws_closed;
-} pty_ctx_t ;
+  int last_audit_line;
+} pty_ctx_t;
 
 struct server {
   int client_count;        // client count
@@ -83,8 +84,13 @@ struct server {
   char socket_path[255];   // UNIX domain socket path
   char terminal_type[30];  // terminal type to report
   char *audit_log;         // audit log file path
-  bool audit_commands;     // whether to log commands
-  bool audit_output;       // whether to log output
+
 
   uv_loop_t *loop;         // the libuv event loop
+
+  // 审计日志配置
+  bool audit_enabled;
+  char *audit_log_file;
+  char **audit_fields;     // NULL-terminated array of custom fields
+  int audit_fields_count;  // number of audit fields
 };

@@ -16,53 +16,6 @@
 // initial message list
 static char initial_cmds[] = {SET_WINDOW_TITLE, SET_PREFERENCES};
 
-// 日志文件路径
-#define AUDIT_LOG_FILE "/var/log/ttyd/audit.log"
-
-// 确保日志目录存在
-static void ensure_log_dir() {
-    char *log_dir = strdup(AUDIT_LOG_FILE);
-    char *last_slash = strrchr(log_dir, '/');
-    if (last_slash) {
-        *last_slash = '\0';
-        mkdir(log_dir, 0755);
-    }
-    free(log_dir);
-}
-
-// 写入审计日志
-static void write_audit_log(const char *user, const char *address, const char *command, int status) {
-    static FILE *log_file = NULL;
-    static bool initialized = false;
-    
-    if (!initialized) {
-        ensure_log_dir();
-        log_file = fopen(AUDIT_LOG_FILE, "a");
-        if (log_file == NULL) {
-            lwsl_err("Failed to open audit log file: %s\n", strerror(errno));
-            return;
-        }
-        initialized = true;
-    }
-    
-    time_t now;
-    struct tm *tm_info;
-    char timestamp[26];
-    
-    time(&now);
-    tm_info = localtime(&now);
-    strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", tm_info);
-    
-    // 写入日志文件
-    fprintf(log_file, "[%s] User: %s, Address: %s, Command: %s, Status: %d\n",
-            timestamp, user, address, command, status);
-    fflush(log_file);
-    
-    // 同时输出到标准输出
-    printf("[%s] User: %s, Address: %s, Command: %s, Status: %d\n",
-           timestamp, user, address, command, status);
-}
-
 static int send_initial_message(struct lws *wsi, int index) {
   unsigned char message[LWS_PRE + 1 + 4096];
   unsigned char *p = &message[LWS_PRE];
@@ -123,6 +76,7 @@ static pty_ctx_t *pty_ctx_init(struct pss_tty *pss) {
   pty_ctx_t *ctx = xmalloc(sizeof(pty_ctx_t));
   ctx->pss = pss;
   ctx->ws_closed = false;
+  ctx->last_audit_line = 0;  // 初始化行号为0
   return ctx;
 }
 
@@ -135,15 +89,70 @@ static void process_read_cb(pty_process *process, pty_buf_t *buf, bool eof) {
     return;
   }
 
-  // 记录命令输出
-  if (server->audit_output && buf != NULL) {
+  if (buf->len > 0) {
     char *output = xmalloc(buf->len + 1);
     memcpy(output, buf->base, buf->len);
     output[buf->len] = '\0';
-    audit_log_output(ctx->pss->user, ctx->pss->address, output);
+
+    lwsl_notice("Received output: %s\n", output);
+
+    // 检查是否包含 AUDIT_CMD: 字符串
+    char *audit_cmd = strstr(output, "AUDIT_CMD:");
+    if (audit_cmd) {
+      // 提取行号和命令内容
+      char *content = audit_cmd + strlen("AUDIT_CMD:");
+      // 去掉换行
+      char *newline = strchr(content, '\n');
+      if (newline) *newline = '\0';
+
+      // 解析行号和命令
+      int line_num;
+      char cmd[1024] = {0};
+      if (sscanf(content, "%d %[^\n]", &line_num, cmd) == 2) {
+        // 检查是否是重复命令
+        if (line_num != ctx->last_audit_line) {
+          audit_log_command(ctx->pss->address, cmd, 0);
+          ctx->last_audit_line = line_num;
+        } else {
+          lwsl_notice("Skipping duplicate command at line %d\n", line_num);
+        }
+      }
+
+      // 移除 AUDIT_CMD 这一行
+      char *line_start = audit_cmd;
+      // 找到这一行的开始
+      while (line_start > output && *(line_start - 1) != '\n') {
+        line_start--;
+      }
+      // 找到这一行的结束
+      char *line_end = strchr(audit_cmd, '\n');
+      if (!line_end) line_end = output + buf->len;
+
+      // 计算需要保留的内容长度
+      size_t before_len = line_start - output;
+      size_t after_len = buf->len - (line_end - output);
+      
+      // 创建新的缓冲区，包含 AUDIT_CMD 行之前和之后的内容
+      pty_buf_t *new_buf = pty_buf_init(output, before_len);
+      if (after_len > 0) {
+        pty_buf_t *after_buf = pty_buf_init(line_end + 1, after_len);
+        // 合并两个缓冲区
+        char *combined = xmalloc(before_len + after_len);
+        memcpy(combined, output, before_len);
+        memcpy(combined + before_len, line_end + 1, after_len);
+        pty_buf_free(new_buf);
+        pty_buf_free(after_buf);
+        new_buf = pty_buf_init(combined, before_len + after_len);
+        free(combined);
+      }
+      
+      pty_buf_free(buf);
+      buf = new_buf;
+    }
     free(output);
   }
 
+  // 正常输出
   if (eof && !process_running(process))
     ctx->pss->lws_close_status = process->exit_code == 0 ? 1000 : 1006;
   else
@@ -184,26 +193,34 @@ static char **build_args(struct pss_tty *pss) {
   return argv;
 }
 
+// 添加审计命令函数
+static const char *get_audit_command(void) {
+    return "echo \"AUDIT_CMD:$(fc -l -1 | cut -f 1-)\"";
+}
+
 static char **build_env(struct pss_tty *pss) {
-  int i = 0, n = 2;
-  char **envp = xmalloc(n * sizeof(char *));
+    int i = 0, n = 3;
+    char **envp = xmalloc(n * sizeof(char *));
 
-  // TERM
-  envp[i] = xmalloc(36);
-  snprintf(envp[i], 36, "TERM=%s", server->terminal_type);
-  i++;
-
-  // TTYD_USER
-  if (strlen(pss->user) > 0) {
-    envp = xrealloc(envp, (++n) * sizeof(char *));
-    envp[i] = xmalloc(40);
-    snprintf(envp[i], 40, "TTYD_USER=%s", pss->user);
+    // TERM
+    envp[i] = xmalloc(36);
+    snprintf(envp[i], 36, "TERM=%s", server->terminal_type);
     i++;
-  }
 
-  envp[i] = NULL;
+    // TTYD_USER
+    if (strlen(pss->user) > 0) {
+        envp[i] = xmalloc(40);
+        snprintf(envp[i], 40, "TTYD_USER=%s", pss->user);
+        i++;
+    }
 
-  return envp;
+    // 添加审计命令
+    envp[i] = xmalloc(200);
+    snprintf(envp[i], 200, "PROMPT_COMMAND=%s", get_audit_command());
+    i++;
+
+    envp[i] = NULL;
+    return envp;
 }
 
 static bool spawn_process(struct pss_tty *pss, uint16_t columns, uint16_t rows) {
@@ -395,24 +412,6 @@ int callback_tty(struct lws *wsi, enum lws_callback_reasons reason, void *user, 
           memcpy(input, pss->buffer + 1, pss->len - 1);
           input[pss->len - 1] = '\0';
           
-          // 处理命令输入
-          if (input[0] == '\r' || input[0] == '\n') {
-            // 命令结束，打印完整命令
-            if (cmd_len > 0) {
-              current_cmd[cmd_len] = '\0';
-              // 记录命令，初始状态为0
-              lwsl_notice("Logging command for user: %s\n", pss->user);  // 添加调试日志
-              audit_log_command(pss->user, pss->address, current_cmd, 0);
-              cmd_len = 0;  // 重置命令长度
-            }
-          } else {
-            // 将输入添加到当前命令
-            if (cmd_len + pss->len - 1 < sizeof(current_cmd)) {
-              memcpy(current_cmd + cmd_len, input, pss->len - 1);
-              cmd_len += pss->len - 1;
-            }
-          }
-          
           // 继续处理命令
           int err = pty_write(pss->process, pty_buf_init(pss->buffer + 1, pss->len - 1));
           if (err) {
@@ -480,11 +479,6 @@ int callback_tty(struct lws *wsi, enum lws_callback_reasons reason, void *user, 
       }
 
       if (pss->process != NULL) {
-        // 记录命令执行状态
-        if (cmd_len > 0) {
-          current_cmd[cmd_len] = '\0';
-          audit_log_command(pss->user, pss->address, current_cmd, pss->process->exit_code);
-        }
         
         ((pty_ctx_t *)pss->process->ctx)->ws_closed = true;
         if (process_running(pss->process)) {
