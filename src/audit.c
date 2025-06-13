@@ -46,6 +46,7 @@ int audit_init(const char *log_file) {
 
     config.log_file = strdup(log_file);
     config.enabled = true;
+    config.max_size = 1000;  // 默认10MB
 
     lwsl_notice("Opening log file: %s\n", log_file);
     // 创建日志文件
@@ -132,10 +133,49 @@ void audit_clear_custom_fields(void) {
     lwsl_notice("Cleared all custom fields\n");
 }
 
+// 轮转日志文件
+static int rotate_log(void) {
+    char new_name[256];
+    snprintf(new_name, sizeof(new_name), "%s.1", config.log_file);
+    
+    // 重命名当前日志文件
+    if (rename(config.log_file, new_name) != 0) {
+        lwsl_err("Failed to rename log file: %s\n", strerror(errno));
+        return -1;
+    }
+
+    // 创建新的日志文件
+    FILE *fp = fopen(config.log_file, "a");
+    if (fp == NULL) {
+        lwsl_err("Failed to create new log file: %s\n", strerror(errno));
+        // 如果创建新文件失败，尝试恢复原文件
+        if (rename(new_name, config.log_file) != 0) {
+            lwsl_err("Failed to restore original log file: %s\n", strerror(errno));
+        }
+        return -1;
+    }
+    fclose(fp);
+
+    lwsl_notice("Log rotated: %s -> %s\n", config.log_file, new_name);
+    return 0;
+}
+
 // 修改 write_log_entry 函数
 static void write_log_entry(const audit_entry_t *entry) {
     lwsl_notice("Writing log entry to file: %s\n", config.log_file);
     pthread_mutex_lock(&log_mutex);
+
+    // 检查文件大小
+    struct stat st;
+    if (stat(config.log_file, &st) == 0 && st.st_size >= config.max_size) {
+        lwsl_notice("Need to rotate log file, current file size: %d, config.max_size: %d\n",st.st_size,config.max_size);
+        int ret = rotate_log();
+        if (ret != 0) {
+            lwsl_err("Failed to rotate log file\n");
+            pthread_mutex_unlock(&log_mutex);
+            return;
+        }
+    }
 
     FILE *fp = fopen(config.log_file, "a");
     if (fp == NULL) {
@@ -237,8 +277,6 @@ void audit_log_command(const char *address, const char *command) {
         free(entry.custom_fields[i].value);
     }
     free(entry.custom_fields);
-    
-    lwsl_notice("Command logged successfully\n");
 }
 
 // 验证审计字段格式

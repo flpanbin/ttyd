@@ -96,8 +96,6 @@ static void process_read_cb(pty_process *process, pty_buf_t *buf, bool eof) {
     memcpy(output, buf->base, buf->len);
     output[buf->len] = '\0';
 
-    lwsl_notice("Received output: %s\n", output);
-
     // 检查是否包含 AUDIT_CMD: 字符串
     char *audit_cmd = strstr(output, "AUDIT_CMD:");
     if (audit_cmd) {
@@ -321,28 +319,7 @@ int callback_tty(struct lws *wsi, enum lws_callback_reasons reason, void *user, 
       pss->authenticated = false;
       pss->wsi = wsi;
       pss->lws_close_status = LWS_CLOSE_STATUS_NOSTATUS;
-      memset(pss->user, 0, sizeof(pss->user));  // 初始化 user 字段
-
-      // 设置用户信息
-      if (server->username != NULL) {
-        // 如果设置了 username 参数，使用它作为审计日志的用户名
-        strncpy(pss->user, server->username, sizeof(pss->user) - 1);
-        pss->user[sizeof(pss->user) - 1] = '\0';  // 确保字符串结束
-        lwsl_notice("Using username from command line: %s\n", pss->user);
-      } else if (server->auth_header != NULL) {
-        // 否则尝试从 HTTP 头部获取
-        if (lws_hdr_custom_copy(wsi, pss->user, sizeof(pss->user), server->auth_header, strlen(server->auth_header)) <= 0) {
-          lwsl_warn("Failed to get user from auth header\n");
-          strcpy(pss->user, "unknown");
-        }
-      } else {
-        strcpy(pss->user, "anonymous");
-      }
-
-      // 确保用户名字符串正确结束
-      pss->user[sizeof(pss->user) - 1] = '\0';
-      lwsl_notice("Final username set to: %s\n", pss->user);
-
+      
       if (server->url_arg) {
         while (lws_hdr_copy_fragment(wsi, buf, sizeof(buf), WSI_TOKEN_HTTP_URI_ARGS, n++) > 0) {
           if (strncmp(buf, "arg=", 4) == 0) {

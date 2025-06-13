@@ -16,6 +16,7 @@ typedef struct {
     char *log_file;
     audit_custom_field_t *custom_fields;  // 自定义字段数组
     int custom_fields_count;              // 自定义字段数量
+    size_t max_size;                      // 单个日志文件最大大小（字节）
 } audit_config_t;
 
 // 审计日志条目结构
