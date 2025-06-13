@@ -164,12 +164,7 @@ static void write_log_entry(const audit_entry_t *entry) {
         fprintf(fp, ", Command: %s", entry->command);
     }
     fprintf(fp, "\n");
-
-    if (entry->output) {
-        fprintf(fp, "Output: %s\n", entry->output);
-    }
     fflush(fp);
-
     fclose(fp);
     pthread_mutex_unlock(&log_mutex);
     lwsl_notice("Log entry written successfully\n");
@@ -200,22 +195,20 @@ static char *clean_command_string(const char *cmd) {
 }
 
 // 修改 audit_log_command 函数
-void audit_log_command(const char *address, const char *command, int status) {
+void audit_log_command(const char *address, const char *command) {
     if (!config.enabled) {
         lwsl_notice("Audit system is not enabled, skipping log entry\n");
         return;
     }
     
     char *clean_cmd = clean_command_string(command);
-    lwsl_notice("Logging command: address='%s', command='%s', status=%d\n", 
-               address, clean_cmd, status);
+    lwsl_notice("Logging command: address='%s', command='%s'\n", 
+               address, clean_cmd);
                
     audit_entry_t entry = {
         .timestamp = time(NULL),
         .address = strdup(address),
         .command = clean_cmd,
-        .output = NULL,
-        .status = status,
         .custom_fields = NULL,
         .custom_fields_count = 0
     };

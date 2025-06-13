@@ -23,8 +23,6 @@ typedef struct {
     time_t timestamp;
     char *address;
     char *command;
-    char *output;
-    int status;
     audit_custom_field_t *custom_fields;  // 自定义字段数组
     int custom_fields_count;              // 自定义字段数量
 } audit_entry_t;
@@ -33,7 +31,7 @@ typedef struct {
 int audit_init(const char *log_file);
 
 // 记录命令
-void audit_log_command(const char *address, const char *command, int status);
+void audit_log_command(const char *address, const char *command);
 
 // 关闭审计系统
 void audit_cleanup(void);

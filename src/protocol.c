@@ -118,7 +118,7 @@ static void process_read_cb(pty_process *process, pty_buf_t *buf, bool eof) {
         } else {
           // 检查是否是重复的AUDIT_CMD命令， 如果按回车键也会触发 PROMPT_COMMAND, 这种情况需要过滤
           if (line_num != ctx->last_audit_line) {
-            audit_log_command(ctx->pss->address, cmd, 0);
+            audit_log_command(ctx->pss->address, cmd);
             ctx->last_audit_line = line_num;
           } else {
             lwsl_notice("Skipping duplicate command at line %d\n", line_num);

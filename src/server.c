@@ -580,18 +580,10 @@ int main(int argc, char **argv) {
                    options[option_index].name, 
                    optarg ? optarg : "NULL");
         if (strcmp(options[option_index].name, "audit-enable") == 0) {
-          lwsl_notice("Found audit-enable option\n");
           server->audit_enabled = true;
         } else if (strcmp(options[option_index].name, "audit-log-file") == 0) {
-          lwsl_notice("Found audit-log-file option\n");
           server->audit_log_file = strdup(optarg);
-          lwsl_notice("Audit log file set to: %s\n", server->audit_log_file);
         } else if (strcmp(options[option_index].name, "audit-field") == 0) {
-          lwsl_notice("Found audit-field option\n");
-          lwsl_notice("Raw optarg: %s, length: %zu\n", optarg, strlen(optarg));
-          for (size_t i = 0; i < strlen(optarg); i++) {
-            lwsl_notice("optarg[%zu] = '%c' (0x%02x)\n", i, optarg[i], (unsigned char)optarg[i]);
-          }
           if (validate_audit_field(optarg) != 0) {
             lwsl_err("Invalid audit field format: %s\n", optarg);
             cleanup();
@@ -599,7 +591,6 @@ int main(int argc, char **argv) {
           }
           server->audit_fields = xrealloc(server->audit_fields, (server->audit_fields_count + 1) * sizeof(char *));
           server->audit_fields[server->audit_fields_count++] = strdup(optarg);
-          lwsl_notice("Added audit field: %s\n", optarg);
         }
         break;
       default:
