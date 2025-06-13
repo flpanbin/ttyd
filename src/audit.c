@@ -161,17 +161,13 @@ static void write_log_entry(const audit_entry_t *entry) {
     }
 
     if (entry->command) {
-        fprintf(fp, ", Command: %s, Status: %d\n", 
-                entry->command,
-                entry->status);
-    } else {
-        fprintf(fp, "\n");
+        fprintf(fp, ", Command: %s", entry->command);
     }
+    fprintf(fp, "\n");
 
     if (entry->output) {
         fprintf(fp, "Output: %s\n", entry->output);
     }
-    fprintf(fp, "---\n");
     fflush(fp);
 
     fclose(fp);
