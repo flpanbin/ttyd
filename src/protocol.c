@@ -111,13 +111,20 @@ static void process_read_cb(pty_process *process, pty_buf_t *buf, bool eof) {
       int line_num;
       char cmd[1024] = {0};
       if (sscanf(content, "%d %[^\n]", &line_num, cmd) == 2) {
-        // 检查是否是重复命令
-        if (line_num != ctx->last_audit_line) {
-          audit_log_command(ctx->pss->address, cmd, 0);
+        // 打开控制台，会收到一条AUDIT_CMD输出，需要过滤掉
+        if (ctx->last_audit_line == 0) {
           ctx->last_audit_line = line_num;
+          lwsl_notice("Skipping init command: %s, at line %d\n", cmd, line_num);
         } else {
-          lwsl_notice("Skipping duplicate command at line %d\n", line_num);
+          // 检查是否是重复的AUDIT_CMD命令， 如果按回车键也会触发 PROMPT_COMMAND, 这种情况需要过滤
+          if (line_num != ctx->last_audit_line) {
+            audit_log_command(ctx->pss->address, cmd, 0);
+            ctx->last_audit_line = line_num;
+          } else {
+            lwsl_notice("Skipping duplicate command at line %d\n", line_num);
+          }
         }
+        
       }
 
       // 移除 AUDIT_CMD 这一行
