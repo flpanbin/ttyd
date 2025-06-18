@@ -46,7 +46,7 @@ int audit_init(const char *log_file) {
 
     config.log_file = strdup(log_file);
     config.enabled = true;
-    config.max_size = 1000;  // 默认10MB
+    config.max_size = 10 * 1024 * 1024;  // 默认10MB
 
     lwsl_notice("Opening log file: %s\n", log_file);
     // 创建日志文件

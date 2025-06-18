@@ -202,7 +202,7 @@ static char **build_args(struct pss_tty *pss) {
 
 // 添加审计命令函数
 static const char *get_audit_command(void) {
-    return "echo \"AUDIT_CMD:$(fc -l -1 | cut -f 1-)\"";
+        return "echo \"AUDIT_CMD:$(history 1)\"";
 }
 
 static char **build_env(struct pss_tty *pss) {
