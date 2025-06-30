@@ -1,37 +1,37 @@
-#ifndef TTYD_AUDIT_H
-#define TTYD_AUDIT_H
+#ifndef AUDIT_H
+#define AUDIT_H
 
 #include <time.h>
 #include <stdbool.h>
 
-// 自定义字段结构
+// Custom field structure
 typedef struct {
     char *key;
     char *value;
 } audit_custom_field_t;
 
-// 审计配置结构
+// Audit configuration structure
 typedef struct {
     bool enabled;
     char *log_file;
-    audit_custom_field_t *custom_fields;  // 自定义字段数组
-    int custom_fields_count;              // 自定义字段数量
-    size_t max_size;                      // 单个日志文件最大大小（字节）
+    audit_custom_field_t *custom_fields;  // Custom fields array
+    int custom_fields_count;              // Custom fields count
+    size_t max_size;                      // Maximum size of single log file (bytes)
 } audit_config_t;
 
-// 审计日志条目结构
+// Audit log entry structure
 typedef struct {
     time_t timestamp;
     char *address;
     char *command;
-    audit_custom_field_t *custom_fields;  // 自定义字段数组
-    int custom_fields_count;              // 自定义字段数量
+    audit_custom_field_t *custom_fields;  // Custom fields array
+    int custom_fields_count;              // Custom fields count
 } audit_entry_t;
 
-// 初始化审计系统
+// Initialize audit system
 int audit_init(const char *log_file);
 
-// 记录命令
+// Log command
 void audit_log_command(const char *address, const char *command);
 
 // 关闭审计系统
@@ -41,7 +41,7 @@ void audit_cleanup(void);
 int audit_add_custom_field(const char *key, const char *value);
 void audit_clear_custom_fields(void);
 
-// 验证审计字段格式
+// Validate audit field format
 int validate_audit_field(const char *field);
 
-#endif // TTYD_AUDIT_H 
+#endif // AUDIT_H 

@@ -88,7 +88,7 @@ struct server {
 
   uv_loop_t *loop;         // the libuv event loop
 
-  // 审计日志配置
+  // Audit log configuration
   bool audit_enabled;
   char *audit_log_file;
   char **audit_fields;     // NULL-terminated array of custom fields

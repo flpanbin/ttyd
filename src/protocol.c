@@ -76,7 +76,7 @@ static pty_ctx_t *pty_ctx_init(struct pss_tty *pss) {
   pty_ctx_t *ctx = xmalloc(sizeof(pty_ctx_t));
   ctx->pss = pss;
   ctx->ws_closed = false;
-  ctx->last_audit_line = 0;  // 初始化行号为0
+  ctx->last_audit_line = 0;  // Initialize line number to 0
   return ctx;
 }
 
@@ -96,25 +96,25 @@ static void process_read_cb(pty_process *process, pty_buf_t *buf, bool eof) {
     memcpy(output, buf->base, buf->len);
     output[buf->len] = '\0';
 
-    // 检查是否包含 AUDIT_CMD: 字符串
+    // Check if it contains AUDIT_CMD: string
     char *audit_cmd = strstr(output, "AUDIT_CMD:");
     if (audit_cmd) {
-      // 提取行号和命令内容
+      // Extract line number and command content
       char *content = audit_cmd + strlen("AUDIT_CMD:");
-      // 去掉换行
+      // Remove newline
       char *newline = strchr(content, '\n');
       if (newline) *newline = '\0';
 
-      // 解析行号和命令
+      // Parse line number and command
       int line_num;
       char cmd[1024] = {0};
       if (sscanf(content, "%d %[^\n]", &line_num, cmd) == 2) {
-        // 打开控制台，会收到一条AUDIT_CMD输出，需要过滤掉
+        // When opening console, we receive an AUDIT_CMD output that needs to be filtered out
         if (ctx->last_audit_line == 0) {
           ctx->last_audit_line = line_num;
           lwsl_notice("Skipping init command: %s, at line %d\n", cmd, line_num);
         } else {
-          // 检查是否是重复的AUDIT_CMD命令， 如果按回车键也会触发 PROMPT_COMMAND, 这种情况需要过滤
+          // Check if it's a duplicate AUDIT_CMD command, pressing Enter will also trigger PROMPT_COMMAND, this case needs to be filtered
           if (line_num != ctx->last_audit_line) {
             audit_log_command(ctx->pss->address, cmd);
             ctx->last_audit_line = line_num;
@@ -125,25 +125,25 @@ static void process_read_cb(pty_process *process, pty_buf_t *buf, bool eof) {
         
       }
 
-      // 移除 AUDIT_CMD 这一行
+      // Remove the AUDIT_CMD line
       char *line_start = audit_cmd;
-      // 找到这一行的开始
+      // Find the start of this line
       while (line_start > output && *(line_start - 1) != '\n') {
         line_start--;
       }
-      // 找到这一行的结束
+      // Find the end of this line
       char *line_end = strchr(audit_cmd, '\n');
       if (!line_end) line_end = output + buf->len;
 
-      // 计算需要保留的内容长度
+      // Calculate the length of content to keep
       size_t before_len = line_start - output;
       size_t after_len = buf->len - (line_end - output);
       
-      // 创建新的缓冲区，包含 AUDIT_CMD 行之前和之后的内容
+      // Create new buffer containing content before and after the AUDIT_CMD line
       pty_buf_t *new_buf = pty_buf_init(output, before_len);
       if (after_len > 0) {
         pty_buf_t *after_buf = pty_buf_init(line_end + 1, after_len);
-        // 合并两个缓冲区
+        // Merge two buffers
         char *combined = xmalloc(before_len + after_len);
         memcpy(combined, output, before_len);
         memcpy(combined + before_len, line_end + 1, after_len);
@@ -159,7 +159,7 @@ static void process_read_cb(pty_process *process, pty_buf_t *buf, bool eof) {
     free(output);
   }
 
-  // 正常输出
+  // Normal output
   if (eof && !process_running(process))
     ctx->pss->lws_close_status = process->exit_code == 0 ? 1000 : 1006;
   else
@@ -200,7 +200,7 @@ static char **build_args(struct pss_tty *pss) {
   return argv;
 }
 
-// 添加审计命令函数
+// Add audit command function
 static const char *get_audit_command(void) {
         return "echo \"AUDIT_CMD:$(history 1)\"";
 }
@@ -222,7 +222,7 @@ static char **build_env(struct pss_tty *pss) {
       i++;
     }
 
-    // 添加审计命令
+    // Add audit command
     envp[i] = xmalloc(200);
     snprintf(envp[i], 200, "PROMPT_COMMAND=%s", get_audit_command());
     i++;
@@ -281,9 +281,9 @@ static bool check_auth(struct lws *wsi, struct pss_tty *pss) {
 int callback_tty(struct lws *wsi, enum lws_callback_reasons reason, void *user, void *in, size_t len) {
   struct pss_tty *pss = (struct pss_tty *)user;
   char buf[256];
-  static char current_cmd[1024] = {0};  // 用于存储当前命令
-  static size_t cmd_len = 0;            // 当前命令长度
-  int n = 0;                            // 用于存储 lws_hdr_copy 的返回值
+  static char current_cmd[1024] = {0};  // Used to store current command
+  static size_t cmd_len = 0;            // Current command length
+  int n = 0;                            // Used to store lws_hdr_copy return value
 
   switch (reason) {
     case LWS_CALLBACK_FILTER_PROTOCOL_CONNECTION:
@@ -394,12 +394,12 @@ int callback_tty(struct lws *wsi, enum lws_callback_reasons reason, void *user, 
         case INPUT:
           if (!server->writable) break;
           
-          // 获取输入内容
+          // Get input content
           char *input = xmalloc(pss->len);
           memcpy(input, pss->buffer + 1, pss->len - 1);
           input[pss->len - 1] = '\0';
           
-          // 继续处理命令
+          // Continue processing command
           int err = pty_write(pss->process, pty_buf_init(pss->buffer + 1, pss->len - 1));
           if (err) {
             lwsl_err("uv_write: %s (%s)\n", uv_err_name(err), uv_strerror(err));

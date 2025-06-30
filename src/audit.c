@@ -12,7 +12,6 @@
 static audit_config_t config = {0};
 static pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-// 确保日志目录存在
 static int ensure_log_dir(const char *log_file) {
     char *log_dir = strdup(log_file);
     char *last_slash = strrchr(log_dir, '/');
@@ -38,7 +37,7 @@ int audit_init(const char *log_file) {
         return 0;
     }
 
-    // 确保日志目录存在
+    // Ensure log directory exists
     if (ensure_log_dir(log_file) != 0) {
         lwsl_err("Failed to ensure log directory exists\n");
         return -1;
@@ -46,10 +45,10 @@ int audit_init(const char *log_file) {
 
     config.log_file = strdup(log_file);
     config.enabled = true;
-    config.max_size = 10 * 1024 * 1024;  // 默认10MB
+    config.max_size = 10 * 1024 * 1024;  // Default 10MB
 
     lwsl_notice("Opening log file: %s\n", log_file);
-    // 创建日志文件
+    // Create log file
     FILE *fp = fopen(log_file, "a");
     if (fp == NULL) {
         lwsl_err("Failed to open audit log file: %s, error: %s\n", log_file, strerror(errno));
@@ -62,7 +61,7 @@ int audit_init(const char *log_file) {
     return 0;
 }
 
-// 添加自定义字段
+// Add custom fields
 int audit_add_custom_field(const char *key, const char *value) {
     if (!key || !value) {
         lwsl_err("Invalid custom field key or value\n");
@@ -71,7 +70,7 @@ int audit_add_custom_field(const char *key, const char *value) {
 
     pthread_mutex_lock(&log_mutex);
     
-    // 重新分配内存
+    // Reallocate memory
     audit_custom_field_t *new_fields = xrealloc(config.custom_fields, 
         (config.custom_fields_count + 1) * sizeof(audit_custom_field_t));
     
@@ -83,7 +82,7 @@ int audit_add_custom_field(const char *key, const char *value) {
     
     config.custom_fields = new_fields;
     
-    // 添加新字段
+    // Add new field
     size_t key_len = strlen(key);
     size_t value_len = strlen(value);
     
@@ -116,7 +115,7 @@ int audit_add_custom_field(const char *key, const char *value) {
     return 0;
 }
 
-// 清除所有自定义字段
+// Clear all custom fields
 void audit_clear_custom_fields(void) {
     pthread_mutex_lock(&log_mutex);
     
@@ -133,22 +132,22 @@ void audit_clear_custom_fields(void) {
     lwsl_notice("Cleared all custom fields\n");
 }
 
-// 轮转日志文件
+// Rotate log file
 static int rotate_log(void) {
     char new_name[256];
     snprintf(new_name, sizeof(new_name), "%s.1", config.log_file);
     
-    // 重命名当前日志文件
+    // Rename current log file
     if (rename(config.log_file, new_name) != 0) {
         lwsl_err("Failed to rename log file: %s\n", strerror(errno));
         return -1;
     }
 
-    // 创建新的日志文件
+    // Create new log file
     FILE *fp = fopen(config.log_file, "a");
     if (fp == NULL) {
         lwsl_err("Failed to create new log file: %s\n", strerror(errno));
-        // 如果创建新文件失败，尝试恢复原文件
+        // If creating new file fails, try to restore original file
         if (rename(new_name, config.log_file) != 0) {
             lwsl_err("Failed to restore original log file: %s\n", strerror(errno));
         }
@@ -160,12 +159,11 @@ static int rotate_log(void) {
     return 0;
 }
 
-// 修改 write_log_entry 函数
 static void write_log_entry(const audit_entry_t *entry) {
     lwsl_notice("Writing log entry to file: %s\n", config.log_file);
     pthread_mutex_lock(&log_mutex);
 
-    // 检查文件大小
+    // Check file size
     struct stat st;
     if (stat(config.log_file, &st) == 0 && st.st_size >= config.max_size) {
         lwsl_notice("Need to rotate log file, current file size: %d, config.max_size: %d\n",st.st_size,config.max_size);
@@ -188,12 +186,12 @@ static void write_log_entry(const audit_entry_t *entry) {
     struct tm *tm_info = localtime(&entry->timestamp);
     strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", tm_info);
 
-    // 写入时间戳和地址
+    // Write timestamp and address
     fprintf(fp, "[%s] Address: %s", 
             timestamp, 
             entry->address ? entry->address : "unknown");
             
-    // 写入自定义字段
+    // Write custom fields
     for (int i = 0; i < entry->custom_fields_count; i++) {
         fprintf(fp, ", %s: %s", 
                 entry->custom_fields[i].key,
@@ -210,7 +208,7 @@ static void write_log_entry(const audit_entry_t *entry) {
     lwsl_notice("Log entry written successfully\n");
 }
 
-// 清理命令字符串，移除控制字符
+// Clean command string, remove control characters
 static char *clean_command_string(const char *cmd) {
     if (!cmd) return NULL;
     
@@ -219,14 +217,14 @@ static char *clean_command_string(const char *cmd) {
     size_t j = 0;
     
     for (size_t i = 0; i < len; i++) {
-        // 跳过控制字符（ASCII 0-31，除了换行符和回车符）
+        // Skip control characters (ASCII 0-31, except newline and carriage return)
         if (cmd[i] >= 32 || cmd[i] == '\n' || cmd[i] == '\r') {
             clean[j++] = cmd[i];
         }
     }
     clean[j] = '\0';
     
-    // 移除末尾的空白字符
+    // Remove trailing whitespace characters
     while (j > 0 && (clean[j-1] == ' ' || clean[j-1] == '\t')) {
         clean[--j] = '\0';
     }
@@ -234,7 +232,7 @@ static char *clean_command_string(const char *cmd) {
     return clean;
 }
 
-// 修改 audit_log_command 函数
+// Modify audit_log_command function
 void audit_log_command(const char *address, const char *command) {
     if (!config.enabled) {
         lwsl_notice("Audit system is not enabled, skipping log entry\n");
@@ -253,7 +251,7 @@ void audit_log_command(const char *address, const char *command) {
         .custom_fields_count = 0
     };
 
-    // 复制自定义字段
+    // Copy custom fields
     if (config.custom_fields_count > 0) {
         entry.custom_fields = xmalloc((config.custom_fields_count + 1) * sizeof(audit_custom_field_t));
         entry.custom_fields_count = config.custom_fields_count;
@@ -269,7 +267,7 @@ void audit_log_command(const char *address, const char *command) {
 
     write_log_entry(&entry);
 
-    // 清理内存
+    // Clean memory
     free(entry.address);
     free(entry.command);
     for (int i = 0; i < entry.custom_fields_count; i++) {
@@ -279,27 +277,27 @@ void audit_log_command(const char *address, const char *command) {
     free(entry.custom_fields);
 }
 
-// 验证审计字段格式
+// Validate audit field format
 int validate_audit_field(const char *field) {
     if (!field) {
         lwsl_err("Invalid audit field: NULL\n");
         return -1;
     }
 
-    // 检查是否包含等号
+    // Check if it contains an equal sign
     char *value = strchr(field, '=');
     if (!value) {
         lwsl_err("Invalid audit field format: %s (should be key=value)\n", field);
         return -1;
     }
 
-    // 验证键名不为空
+    // Validate key name is not empty
     if (value == field) {
         lwsl_err("Empty key in audit field: %s\n", field);
         return -1;
     }
 
-    // 验证值不为空
+    // Validate value is not empty
     if (*(value + 1) == '\0') {
         lwsl_err("Empty value in audit field: %s\n", field);
         return -1;
@@ -308,7 +306,7 @@ int validate_audit_field(const char *field) {
     return 0;
 }
 
-// 修改 audit_cleanup 函数以清理自定义字段
+// Modify audit_cleanup function to clean up custom fields
 void audit_cleanup(void) {
     lwsl_notice("Cleaning up audit system\n");
     if (!config.enabled) {
@@ -317,7 +315,7 @@ void audit_cleanup(void) {
     }
 
     free(config.log_file);
-    audit_clear_custom_fields();  // 清理自定义字段
+    audit_clear_custom_fields();  // Clean up custom fields
     config.enabled = false;
     pthread_mutex_destroy(&log_mutex);
     lwsl_notice("Audit system cleaned up successfully\n");

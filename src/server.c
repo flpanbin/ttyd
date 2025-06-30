@@ -304,24 +304,22 @@ static int calc_command_start(int argc, char **argv) {
   return start;
 }
 
-// 验证和初始化审计字段
 static int init_audit_fields(void) {
     if (!server->audit_enabled) {
         return 0;
     }
     lwsl_notice("Initializing audit system\n");
-    // 设置默认日志文件路径
     if (!server->audit_log_file) {
         server->audit_log_file = strdup("/var/log/ttyd/audit.log");
         lwsl_notice("Using default audit log file: %s\n", server->audit_log_file);
     }
 
-    // 验证自定义字段格式
+    // verify audit fields.
     for (int i = 0; i < server->audit_fields_count; i++) {
         char *field = server->audit_fields[i];
         lwsl_notice("Processing audit field[%d]: %s\n", i, field);
         
-        // 创建字段的副本以避免修改原始字符串
+        // Create a copy of the field to avoid modifying the original string
         char *field_copy = strdup(field);
         if (!field_copy) {
             lwsl_err("Failed to duplicate audit field: %s\n", field);
@@ -335,9 +333,9 @@ static int init_audit_fields(void) {
             return -1;
         }
         
-        // 分割键值对
-        *value = '\0';  // 在等号处终止键
-        value++;        // 移动到值部分
+        // split key-values.
+        *value = '\0';
+        value++;
         
         lwsl_notice("Adding audit field: key='%s', value='%s'\n", field_copy, value);
         if (audit_add_custom_field(field_copy, value) != 0) {
@@ -350,7 +348,7 @@ static int init_audit_fields(void) {
         lwsl_notice("Audit field[%d] added successfully\n", i);
     }
 
-    // 初始化审计系统，只记录命令
+    // Initialize audit system
     if (audit_init(server->audit_log_file) != 0) {
         lwsl_err("Failed to initialize audit system\n");
         return -1;
@@ -409,7 +407,7 @@ int main(int argc, char **argv) {
 
   // parse command line options
   int c;
-  int option_index = 0;  // 添加 option_index 变量
+  int option_index = 0; 
   while ((c = getopt_long(start, argv, opt_string, options, &option_index)) != -1) {
     lwsl_notice("Processing option: c=%d, option_index=%d\n", c, option_index);
     switch (c) {
@@ -417,7 +415,7 @@ int main(int argc, char **argv) {
         print_help();
         return 0;
       case 'v':
-        printf("ttyd version 1004 %s\n", TTYD_VERSION);
+        printf("ttyd version %s\n", TTYD_VERSION);
         return 0;
       case 'd':
         debug_level = parse_int("debug", optarg);
@@ -599,7 +597,7 @@ int main(int argc, char **argv) {
     }
   }
 
-  // 初始化审计字段
+  // Initialize audit fields
   if (init_audit_fields() != 0) {
     lwsl_err("Failed to initialize audit fields\n");
     cleanup();
@@ -714,20 +712,15 @@ int main(int argc, char **argv) {
   // cleanup
   server_free(server);
 
-  // 清理审计字段
   cleanup();
   return 0;
 }
 
 void cleanup(void) {
-  // ... existing code ...
-  
-  // 清理审计系统
   if (server->audit_enabled) {
     audit_cleanup();
   }
-  
-  // 清理审计字段
+
   if (server->audit_fields) {
     for (char **field = server->audit_fields; *field; field++) {
       free(*field);
@@ -735,5 +728,4 @@ void cleanup(void) {
     free(server->audit_fields);
   }
   
-  // ... existing code ...
 }
